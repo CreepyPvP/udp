@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <cstring>
+#include <stdlib.h>
 
 #define PLATFORM_WINDOWS  1
 #define PLATFORM_MAC      2
@@ -18,6 +20,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <fcntl.h>
+#include <unistd.h>
+#define PLATFORM PLATFORM_UNIX
 #endif
 
 #if PLATFORM == PLATFORM_WINDOWS
@@ -64,12 +68,11 @@ int createSocket(unsigned short port) {
     return handle;
 }
 
-bool send(int handle, const Message* message, unsigned int messageSize) {
+bool send(int handle, int port, const Message* message, unsigned int messageSize) {
     unsigned int a = 127;
     unsigned int b = 0;
     unsigned int c = 0;
     unsigned int d = 7;
-    unsigned short port = 3000;
     unsigned int address = ( a << 24 ) | 
         ( b << 16 ) | 
         ( c << 8  ) | 
@@ -117,10 +120,12 @@ void read(int socket) {
         // for (int i = 0; i < bytes; ++i) {
         //     printf("%c\n", b);
         // }
-        printf("protocol: %d, seq: %d, content: %s\n", 
+        printf("protocol: %d, seq: %d, content: %s, from addr: %u, from port: %u\n", 
             msg.protocol,
             msg.sequence,
-            msg.content
+            msg.content,
+            fromAddress,
+            fromPort
         );
     }
 }
@@ -139,24 +144,30 @@ void destroySocket(int socket) {
 #endif
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        printf("Expected 2 arguments\n");
+        return 1;
+    }
+    int port = strtol(argv[1], NULL, 10);
+    int targetPort = strtol(argv[2], NULL, 10);
+
     if (!setup()) {
         return 1;
     }
-    int socket = createSocket(3000);
+    int socket = createSocket(port);
     if (socket <= 0) {
         return 2;
     }
 
-    printf("Server listening\n");
+    printf("Server listening on port: %d, with target port: %d\n", port, targetPort);
     
     Message msg;
     char data[] = "hello world first message sent over udp yay";
     memcpy(msg.content, data, sizeof(data));
     msg.protocol = 69;
     msg.sequence = 420;
-    send(socket, &msg, sizeof(msg));
-    send(socket, &msg, sizeof(msg));
+    send(socket, targetPort, &msg, sizeof(msg));
     read(socket);
 
     destroySocket(socket);
