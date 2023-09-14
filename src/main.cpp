@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <stdio.h>
 #include <cstring>
 #include <stdlib.h>
@@ -59,7 +60,7 @@ struct UdpSocket {
     void destroy();
 
     void read();
-    bool send(int port, const Message* message, unsigned int messageSize);
+    bool send(int port, unsigned int address, const Message* message, unsigned int messageSize);
 };
 
 bool setup() {
@@ -113,13 +114,7 @@ bool UdpSocket::init(unsigned short port) {
     return true;
 }
 
-bool UdpSocket::send(int port, const Message* message, unsigned int messageSize) {
-    unsigned int a = 127;
-    unsigned int b = 0;
-    unsigned int c = 0;
-    unsigned int d = 7;
-    unsigned int address = ( a << 24 ) | ( b << 16 ) | ( c << 8  ) | d;
-
+bool UdpSocket::send(int port, unsigned int address, const Message* message, unsigned int messageSize) {
     sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(address);
@@ -185,13 +180,26 @@ void UdpSocket::destroy() {
 #endif
 }
 
+unsigned int parseAddress(const char* str) {
+    unsigned int a = strtol(str, (char**) &str, 10);
+    ++str;
+    unsigned int b = strtol(str, (char**) &str, 10);
+    ++str;
+    unsigned int c = strtol(str, (char**) &str, 10);
+    ++str;
+    unsigned int d = strtol(str, (char**) &str, 10);
+    ++str;
+    return ( a << 24 ) | ( b << 16 ) | ( c << 8  ) | d;
+}
+
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        printf("Expected 2 arguments\n");
+    if (argc < 4) {
+        printf("Expected 3 arguments\n");
         return 1;
     }
     int port = strtol(argv[1], NULL, 10);
     int targetPort = strtol(argv[2], NULL, 10);
+    unsigned int address = parseAddress(argv[3]);
 
     if (!setup()) {
         return 1;
@@ -210,7 +218,7 @@ int main(int argc, char** argv) {
     msg.sequence = 420;
 
     while (true) {
-        socket.send(targetPort, &msg, sizeof(msg));
+        socket.send(targetPort, address, &msg, sizeof(msg));
         socket.read();
         // wait(1.0 / 30.0);
         wait(1.0);
