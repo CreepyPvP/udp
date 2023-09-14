@@ -176,7 +176,7 @@ void UdpSocket::destroy() {
 #if PLATFORM == PLATFORM_MAC || PLATFORM == PLATFORM_UNIX
     close(handle);
 #elif PLATFORM == PLATFORM_WINDOWS
-    closesocket(socket);
+    closesocket(handle);
 #endif
 }
 
