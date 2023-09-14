@@ -1,7 +1,9 @@
+#include <cstdint>
 #include <cstdlib>
 #include <stdio.h>
 #include <cstring>
 #include <stdlib.h>
+#include <stdint.h>
 #include <unordered_map>
 
 #define PLATFORM_WINDOWS  1
@@ -33,14 +35,13 @@
 
 #define PROTOCOL_VERSION 1
 
-// TODO: use fixed size types
 union Message {
     char raw[256];
     struct {
-        unsigned int protocol;
-        unsigned int sequence;
-        unsigned int ark;
-        int arkFlags;
+        std::uint32_t protocol;
+        std::uint32_t sequence;
+        std::uint32_t ark;
+        std::int32_t arkFlags;
 
         char content[];
     };
