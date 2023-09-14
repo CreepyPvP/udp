@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <cstring>
 #include <stdlib.h>
+#include <unordered_map>
 
 #define PLATFORM_WINDOWS  1
 #define PLATFORM_MAC      2
@@ -16,6 +17,7 @@
 
 #if PLATFORM == PLATFORM_WINDOWS
 #include <winsock2.h>
+#include <windows.h>
 #elif PLATFORM == PLATFORM_MAC || PLATFORM == PLATFORM_UNIX
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -28,6 +30,9 @@
 #pragma comment(lib, "wsock32.lib")
 #endif
 
+#define PROTOCOL_VERSION 1
+
+// TODO: use fixed size types
 union Message {
     char raw[256];
     struct {
@@ -35,8 +40,26 @@ union Message {
         unsigned int sequence;
         unsigned int ark;
         int arkFlags;
+
         char content[];
     };
+};
+
+struct Connection {
+    unsigned int sequence;
+    unsigned int remoteSequence;
+};
+
+struct UdpSocket {
+    std::unordered_map<unsigned int, Connection> connections;
+
+    int handle;
+
+    bool init(unsigned short port);
+    void destroy();
+
+    void read();
+    bool send(int port, const Message* message, unsigned int messageSize);
 };
 
 bool setup() {
@@ -48,11 +71,19 @@ bool setup() {
 #endif
 }
 
-int createSocket(unsigned short port) {
-    int handle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+void wait(double seconds) {
+#if PLATFORM == PLATFORM_WINDOWS
+    Sleep(seconds * 1000);
+#else
+    sleep(seconds);
+#endif
+}
+
+bool UdpSocket::init(unsigned short port) {
+    handle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (handle <= 0) {
         printf("failed to create socket\n");
-        return -1;
+        return false;
     }
 
     sockaddr_in address;
@@ -62,21 +93,32 @@ int createSocket(unsigned short port) {
 
     if (bind(handle, (const sockaddr*) &address, sizeof(sockaddr_in)) < 0) {
         printf("failed to bind socket\n");
-        return -1;
+        return false;
     }
 
-    return handle;
+#if PLATFORM == PLATFORM_MAC || PLATFORM == PLATFORM_UNIX
+    int nonBlocking = 1;
+    if (fcntl(handle, F_SETFL, O_NONBLOCK, nonBlocking) == -1) {
+        printf("failed to set non-blocking\n");
+        return false;
+    }
+#elif PLATFORM == PLATFORM_WINDOWS
+    DWORD nonBlocking = 1;
+    if (ioctlsocket(handle, FIONBIO, &nonBlocking) != 0) {
+        printf("failed to set non-blocking\n");
+        return false;
+    }
+#endif
+
+    return true;
 }
 
-bool send(int handle, int port, const Message* message, unsigned int messageSize) {
+bool UdpSocket::send(int port, const Message* message, unsigned int messageSize) {
     unsigned int a = 127;
     unsigned int b = 0;
     unsigned int c = 0;
     unsigned int d = 7;
-    unsigned int address = ( a << 24 ) | 
-        ( b << 16 ) | 
-        ( c << 8  ) | 
-        d;
+    unsigned int address = ( a << 24 ) | ( b << 16 ) | ( c << 8  ) | d;
 
     sockaddr_in addr;
     addr.sin_family = AF_INET;
@@ -96,8 +138,8 @@ bool send(int handle, int port, const Message* message, unsigned int messageSize
     return true;
 }
 
-void read(int socket) {
-    while ( true )
+void UdpSocket::read() {
+    while (true)
     {
         Message msg;
         unsigned int maxPacketSize = sizeof(Message);
@@ -106,7 +148,7 @@ void read(int socket) {
 #endif
         sockaddr_in from;
         socklen_t fromLength = sizeof(from);
-        int bytes = recvfrom(socket, (char*) &msg.raw, maxPacketSize, 0, 
+        int bytes = recvfrom(handle, (char*) &msg.raw, maxPacketSize, 0, 
             (sockaddr*) &from, 
             &fromLength
         );
@@ -117,17 +159,16 @@ void read(int socket) {
         unsigned int fromAddress = ntohl(from.sin_addr.s_addr);
         unsigned int fromPort = ntohs(from.sin_port);
 
-        // for (int i = 0; i < bytes; ++i) {
-        //     printf("%c\n", b);
-        // }
-        printf("protocol: %d, seq: %d, content: %s, from addr: %u, from port: %u\n", 
-            msg.protocol,
+        // TODO: validate request
+        if (msg.protocol != PROTOCOL_VERSION) {
+            continue;
+        }
+
+        printf("seq: %d, content: %s\n", 
             msg.sequence,
-            msg.content,
-            fromAddress,
-            fromPort
+            msg.content
         );
-    }
+     }
 }
 
 void cleanup() {
@@ -136,9 +177,9 @@ void cleanup() {
 #endif
 }
 
-void destroySocket(int socket) {
+void UdpSocket::destroy() {
 #if PLATFORM == PLATFORM_MAC || PLATFORM == PLATFORM_UNIX
-    close(socket);
+    close(handle);
 #elif PLATFORM == PLATFORM_WINDOWS
     closesocket(socket);
 #endif
@@ -155,8 +196,8 @@ int main(int argc, char** argv) {
     if (!setup()) {
         return 1;
     }
-    int socket = createSocket(port);
-    if (socket <= 0) {
+    UdpSocket socket;
+    if (!socket.init(port)) {
         return 2;
     }
 
@@ -165,11 +206,16 @@ int main(int argc, char** argv) {
     Message msg;
     char data[] = "hello world first message sent over udp yay";
     memcpy(msg.content, data, sizeof(data));
-    msg.protocol = 69;
+    msg.protocol = PROTOCOL_VERSION;
     msg.sequence = 420;
-    send(socket, targetPort, &msg, sizeof(msg));
-    read(socket);
 
-    destroySocket(socket);
+    while (true) {
+        socket.send(targetPort, &msg, sizeof(msg));
+        socket.read();
+        // wait(1.0 / 30.0);
+        wait(1.0);
+    }
+
+    socket.destroy();
     cleanup();
 }
