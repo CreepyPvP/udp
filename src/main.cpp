@@ -4,7 +4,7 @@
 #include <cstring>
 #include <stdlib.h>
 #include <stdint.h>
-#include <unordered_map>
+#include <assert.h>
 
 #define PLATFORM_WINDOWS  1
 #define PLATFORM_MAC      2
@@ -34,6 +34,7 @@
 #endif
 
 #define PROTOCOL_VERSION 1
+#define CONNECTION_COUNT 16
 
 union Message {
     char raw[256];
@@ -48,20 +49,21 @@ union Message {
 };
 
 struct Connection {
+    unsigned int address;
     unsigned int sequence;
     unsigned int remoteSequence;
 };
 
 struct UdpSocket {
-    std::unordered_map<unsigned int, Connection> connections;
-
     int handle;
+    int currentConnections;
+    Connection connections[CONNECTION_COUNT];
 
     bool init(unsigned short port);
     void destroy();
-
     void read();
-    bool send(int port, unsigned int address, const Message* message, unsigned int messageSize);
+    bool send(int port, unsigned int address, Message* message, unsigned int messageSize);
+    int findConnection(unsigned int address);
 };
 
 bool setup() {
@@ -112,10 +114,16 @@ bool UdpSocket::init(unsigned short port) {
     }
 #endif
 
+    currentConnections = 0;
+
     return true;
 }
 
-bool UdpSocket::send(int port, unsigned int address, const Message* message, unsigned int messageSize) {
+bool UdpSocket::send(int port, unsigned int address, Message* message, unsigned int messageSize) {
+    int connectionId = findConnection(address);
+    message->sequence = ++(connections[connectionId].sequence);
+    message->ark = connections[connectionId].remoteSequence;
+
     sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(address);
@@ -155,16 +163,40 @@ void UdpSocket::read() {
         unsigned int fromAddress = ntohl(from.sin_addr.s_addr);
         unsigned int fromPort = ntohs(from.sin_port);
 
-        // TODO: validate request
         if (msg.protocol != PROTOCOL_VERSION) {
             continue;
         }
 
-        printf("seq: %d, content: %s\n", 
+        int connectionId = findConnection(fromAddress);
+        connections[connectionId].remoteSequence = msg.sequence;
+
+        printf("seq: %d, content: %s, from: %d\n", 
             msg.sequence,
-            msg.content
+            msg.content,
+            connectionId
         );
      }
+}
+
+int UdpSocket::findConnection(unsigned int address) {
+    int connectionId = -1;
+    for (int i = 0; i < currentConnections; ++i) {
+        if (connections[i].address == address) {
+            connectionId = i;
+            break;
+        }
+    }
+    if (connectionId < 0) {
+        assert(currentConnections < CONNECTION_COUNT);
+        connectionId = currentConnections;
+        ++currentConnections;
+
+        connections[connectionId].sequence = 0;
+        connections[connectionId].address = address;
+        connections[connectionId].remoteSequence = 0;
+    }
+
+    return connectionId;
 }
 
 void cleanup() {
@@ -216,7 +248,6 @@ int main(int argc, char** argv) {
     char data[] = "hello world first message sent over udp yay";
     memcpy(msg.content, data, sizeof(data));
     msg.protocol = PROTOCOL_VERSION;
-    msg.sequence = 420;
 
     while (true) {
         socket.send(targetPort, address, &msg, sizeof(msg));
