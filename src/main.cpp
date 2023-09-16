@@ -1,3 +1,4 @@
+#include <bits/types/time_t.h>
 #include <cstdint>
 #include <cstdlib>
 #include <stdio.h>
@@ -5,6 +6,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <assert.h>
+#include <time.h>
 
 #define PLATFORM_WINDOWS  1
 #define PLATFORM_MAC      2
@@ -35,6 +37,9 @@
 
 #define PROTOCOL_VERSION 1
 #define CONNECTION_COUNT 16
+#define PACKET_TIMEOUT_SEC 2.0
+// Expected outgoing packets per sec * packet timeout in sec * 2 (just to be sure)
+#define PACKET_BUFFER_SIZE 1 * 2 * 2
 
 union Message {
     char raw[256];
@@ -48,10 +53,20 @@ union Message {
     };
 };
 
+struct PacketRef {
+    unsigned int sequence;
+    bool ack;
+    time_t timestamp;
+};
+
 struct Connection {
     unsigned int address;
     unsigned int sequence;
     unsigned int remoteSequence;
+
+    int currentPacketPtr;
+    int currentAckPtr;
+    PacketRef packetBuffer[PACKET_BUFFER_SIZE];
 };
 
 struct UdpSocket {
@@ -121,8 +136,22 @@ bool UdpSocket::init(unsigned short port) {
 
 bool UdpSocket::send(int port, unsigned int address, Message* message, unsigned int messageSize) {
     int connectionId = findConnection(address);
-    message->sequence = ++(connections[connectionId].sequence);
+    unsigned int sequence = ++(connections[connectionId].sequence); 
+    message->sequence = sequence;
     message->ark = connections[connectionId].remoteSequence;
+    
+    
+    int currentPacketPtr = connections[connectionId].currentPacketPtr;
+    PacketRef packetRef;
+    packetRef.sequence = sequence;
+    packetRef.ack = false;
+    packetRef.timestamp = time(NULL);
+    connections[connectionId].packetBuffer[currentPacketPtr] = packetRef;
+
+    if (++currentPacketPtr >= PACKET_BUFFER_SIZE) {
+        currentPacketPtr = 0;
+    }
+    connections[connectionId].currentPacketPtr = currentPacketPtr;
 
     sockaddr_in addr;
     addr.sin_family = AF_INET;
@@ -194,6 +223,8 @@ int UdpSocket::findConnection(unsigned int address) {
         connections[connectionId].sequence = 0;
         connections[connectionId].address = address;
         connections[connectionId].remoteSequence = 0;
+        connections[connectionId].currentPacketPtr = 0;
+        connections[connectionId].currentAckPtr = -1;
     }
 
     return connectionId;
