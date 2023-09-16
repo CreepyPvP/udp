@@ -79,6 +79,7 @@ struct UdpSocket {
     void read();
     bool send(int port, unsigned int address, Message* message, unsigned int messageSize);
     int findConnection(unsigned int address);
+    void tick();
 };
 
 bool setup() {
@@ -151,6 +152,7 @@ bool UdpSocket::send(int port, unsigned int address, Message* message, unsigned 
     if (++currentPacketPtr >= PACKET_BUFFER_SIZE) {
         currentPacketPtr = 0;
     }
+    assert(currentPacketPtr != connections[connectionId].currentAckPtr);
     connections[connectionId].currentPacketPtr = currentPacketPtr;
 
     sockaddr_in addr;
@@ -230,6 +232,21 @@ int UdpSocket::findConnection(unsigned int address) {
     return connectionId;
 }
 
+void UdpSocket::tick() {
+    for (int i = 0; i < currentConnections; ++i) {
+        int currentAckPtr = connections[i].currentAckPtr;
+        int currentPacketPtr = connections[i].currentPacketPtr;
+        if (currentAckPtr == -1 && currentPacketPtr != 0) {
+            currentAckPtr = 0;
+        }
+
+        // TODO: Skip timed out or acknowledged packets here
+        
+
+        connections[i].currentAckPtr = currentAckPtr;
+    }
+}
+
 void cleanup() {
 #if PLATFORM == PLATFORM_WINDOWS
     WSACleanup();
@@ -283,6 +300,7 @@ int main(int argc, char** argv) {
     while (true) {
         socket.send(targetPort, address, &msg, sizeof(msg));
         socket.read();
+        socket.tick();
         // wait(1.0 / 30.0);
         wait(1.0);
     }
