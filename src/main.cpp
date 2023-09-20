@@ -38,8 +38,8 @@
 #define PROTOCOL_VERSION 1
 #define CONNECTION_COUNT 16
 #define PACKET_TIMEOUT_SEC 2.0
-// Expected outgoing packets per sec * packet timeout in sec * 2 (just to be sure)
-#define PACKET_BUFFER_SIZE 1 * 2 * 2
+// Expected outgoing packets per sec * packet timeout in sec * 4 (just to be sure)
+#define PACKET_BUFFER_SIZE 4
 
 union Message {
     char raw[256];
@@ -233,6 +233,7 @@ int UdpSocket::findConnection(unsigned int address) {
 }
 
 void UdpSocket::tick() {
+    time_t currentTimestamp = time(NULL);
     for (int i = 0; i < currentConnections; ++i) {
         int currentAckPtr = connections[i].currentAckPtr;
         int currentPacketPtr = connections[i].currentPacketPtr;
@@ -241,7 +242,26 @@ void UdpSocket::tick() {
         }
 
         // TODO: Skip timed out or acknowledged packets here
-        
+        while (true) {
+            int nextAckPtr = currentAckPtr;
+            if (++nextAckPtr == PACKET_BUFFER_SIZE)
+                nextAckPtr = 0;
+            
+            if (nextAckPtr == currentPacketPtr)
+                break;
+
+            PacketRef packet = connections[i].packetBuffer[nextAckPtr];
+            if (packet.ack || currentTimestamp - packet.timestamp >= 2) {
+                // TODO: Track metrics like rtt and packet loss
+                currentAckPtr = nextAckPtr;
+
+                if (!packet.ack) {
+                    printf("Packet %u timeouted\n", packet.sequence);
+                }
+            } else {
+                break;
+            }
+        }
 
         connections[i].currentAckPtr = currentAckPtr;
     }
@@ -297,7 +317,7 @@ int main(int argc, char** argv) {
     memcpy(msg.content, data, sizeof(data));
     msg.protocol = PROTOCOL_VERSION;
 
-    while (true) {
+    while(true) {
         socket.send(targetPort, address, &msg, sizeof(msg));
         socket.read();
         socket.tick();
