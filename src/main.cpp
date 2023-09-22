@@ -39,7 +39,7 @@
 #define CONNECTION_COUNT 16
 #define PACKET_TIMEOUT_SEC 2.0
 // Expected outgoing packets per sec * packet timeout in sec * 2 + 2 (just to be sure)
-#define PACKET_BUFFER_SIZE 6
+#define PACKET_BUFFER_SIZE 10 * 2 * 2 + 2
 
 union Message {
     char raw[256];
@@ -222,6 +222,8 @@ void UdpSocket::read() {
 
             PacketRef packet = packetBuffer[currentArkPtr];
 
+            // TODO: ark older packets here
+            int sequenceDif = packet.sequence - msg.ark;
             if (packet.sequence == msg.ark && !packet.ark) {
                 packet.ark = true;
                 packet.arkTimestamp = currentTimestamp;
@@ -320,13 +322,14 @@ unsigned int parseAddress(const char* str) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 4) {
-        printf("Expected 3 arguments\n");
+    if (argc < 5) {
+        printf("Expected 4 arguments\n");
         return 1;
     }
     int port = strtol(argv[1], NULL, 10);
     int targetPort = strtol(argv[2], NULL, 10);
     unsigned int address = parseAddress(argv[3]);
+    int messagesPerTick = strtol(argv[4], NULL, 10);
 
     if (!setup()) {
         return 1;
@@ -344,7 +347,9 @@ int main(int argc, char** argv) {
     msg.protocol = PROTOCOL_VERSION;
 
     while(true) {
-        socket.send(targetPort, address, &msg, sizeof(msg));
+        for (int i = 0; i < messagesPerTick; ++i) {
+            socket.send(targetPort, address, &msg, sizeof(msg));
+        }
         socket.read();
         socket.tick();
         // wait(1.0 / 30.0);
