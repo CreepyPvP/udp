@@ -38,8 +38,8 @@
 #define PROTOCOL_VERSION 1
 #define CONNECTION_COUNT 16
 #define PACKET_TIMEOUT_SEC 2.0
-// Expected outgoing packets per sec * packet timeout in sec * 4 (just to be sure)
-#define PACKET_BUFFER_SIZE 4
+// Expected outgoing packets per sec * packet timeout in sec * 2 + 2 (just to be sure)
+#define PACKET_BUFFER_SIZE 6
 
 union Message {
     char raw[256];
@@ -55,8 +55,9 @@ union Message {
 
 struct PacketRef {
     unsigned int sequence;
-    bool ack;
+    bool ark;
     time_t timestamp;
+    time_t arkTimestamp;
 };
 
 struct Connection {
@@ -65,7 +66,7 @@ struct Connection {
     unsigned int remoteSequence;
 
     int currentPacketPtr;
-    int currentAckPtr;
+    int currentArkPtr;
     PacketRef packetBuffer[PACKET_BUFFER_SIZE];
 };
 
@@ -145,14 +146,14 @@ bool UdpSocket::send(int port, unsigned int address, Message* message, unsigned 
     int currentPacketPtr = connections[connectionId].currentPacketPtr;
     PacketRef packetRef;
     packetRef.sequence = sequence;
-    packetRef.ack = false;
+    packetRef.ark = false;
     packetRef.timestamp = time(NULL);
     connections[connectionId].packetBuffer[currentPacketPtr] = packetRef;
 
     if (++currentPacketPtr >= PACKET_BUFFER_SIZE) {
         currentPacketPtr = 0;
     }
-    assert(currentPacketPtr != connections[connectionId].currentAckPtr);
+    assert(currentPacketPtr != connections[connectionId].currentArkPtr);
     connections[connectionId].currentPacketPtr = currentPacketPtr;
 
     sockaddr_in addr;
@@ -174,6 +175,7 @@ bool UdpSocket::send(int port, unsigned int address, Message* message, unsigned 
 }
 
 void UdpSocket::read() {
+    time_t currentTimestamp = time(NULL);
     while (true)
     {
         Message msg;
@@ -201,11 +203,35 @@ void UdpSocket::read() {
         int connectionId = findConnection(fromAddress);
         connections[connectionId].remoteSequence = msg.sequence;
 
+        int currentArkPtr = connections[connectionId].currentArkPtr;
+        const int currentPacketPtr = connections[connectionId].currentPacketPtr;
+        PacketRef* packetBuffer = connections[connectionId].packetBuffer;
         printf("seq: %d, content: %s, from: %d\n", 
             msg.sequence,
             msg.content,
             connectionId
         );
+
+        if (currentArkPtr < 0)
+            continue;
+
+        while (true) {
+            if (currentArkPtr == currentPacketPtr) {
+                break;
+            }
+
+            PacketRef packet = packetBuffer[currentArkPtr];
+
+            if (packet.sequence == msg.ark && !packet.ark) {
+                packet.ark = true;
+                packet.arkTimestamp = currentTimestamp;
+                packetBuffer[currentArkPtr] = packet;
+            }
+
+            if (++currentArkPtr == PACKET_BUFFER_SIZE) {
+                currentArkPtr = 0;
+            }
+        }
      }
 }
 
@@ -226,7 +252,7 @@ int UdpSocket::findConnection(unsigned int address) {
         connections[connectionId].address = address;
         connections[connectionId].remoteSequence = 0;
         connections[connectionId].currentPacketPtr = 0;
-        connections[connectionId].currentAckPtr = -1;
+        connections[connectionId].currentArkPtr = -1;
     }
 
     return connectionId;
@@ -235,27 +261,27 @@ int UdpSocket::findConnection(unsigned int address) {
 void UdpSocket::tick() {
     time_t currentTimestamp = time(NULL);
     for (int i = 0; i < currentConnections; ++i) {
-        int currentAckPtr = connections[i].currentAckPtr;
+        int currentArkPtr = connections[i].currentArkPtr;
         int currentPacketPtr = connections[i].currentPacketPtr;
-        if (currentAckPtr == -1 && currentPacketPtr != 0) {
-            currentAckPtr = 0;
+        if (currentArkPtr == -1 && currentPacketPtr != 0) {
+            currentArkPtr = 0;
         }
 
         // TODO: Skip timed out or acknowledged packets here
         while (true) {
-            int nextAckPtr = currentAckPtr;
-            if (++nextAckPtr == PACKET_BUFFER_SIZE)
-                nextAckPtr = 0;
+            int nextArkPtr = currentArkPtr;
+            if (++nextArkPtr == PACKET_BUFFER_SIZE)
+                nextArkPtr = 0;
             
-            if (nextAckPtr == currentPacketPtr)
+            if (nextArkPtr == currentPacketPtr)
                 break;
 
-            PacketRef packet = connections[i].packetBuffer[nextAckPtr];
-            if (packet.ack || currentTimestamp - packet.timestamp >= 2) {
+            PacketRef packet = connections[i].packetBuffer[nextArkPtr];
+            if (packet.ark || currentTimestamp - packet.timestamp >= 2) {
                 // TODO: Track metrics like rtt and packet loss
-                currentAckPtr = nextAckPtr;
+                currentArkPtr = nextArkPtr;
 
-                if (!packet.ack) {
+                if (!packet.ark) {
                     printf("Packet %u timeouted\n", packet.sequence);
                 }
             } else {
@@ -263,7 +289,7 @@ void UdpSocket::tick() {
             }
         }
 
-        connections[i].currentAckPtr = currentAckPtr;
+        connections[i].currentArkPtr = currentArkPtr;
     }
 }
 
