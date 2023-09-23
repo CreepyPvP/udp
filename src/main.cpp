@@ -109,9 +109,20 @@ void msleep(int milliseconds){
 }
 
 uint64_t getTimestamp() {
+#if PLATFORM == PLATFORM_WINDOWS
+    LARGE_INTEGER time, freq;
+    if (!QueryPerformanceFrequency(&freq))
+        return 0;
+
+    if (!QueryPerformanceCounter(&time)) {
+        return 0;
+    }
+    return time.QuadPart / freq.QuadPart;
+#else
     timespec current;
     clock_gettime(CLOCK_MONOTONIC_RAW, &current);
     return current.tv_sec * 1000 + current.tv_nsec / 1000000;
+#endif
 }
 
 bool UdpSocket::init(unsigned short port) {
