@@ -37,7 +37,7 @@
 
 #define PROTOCOL_VERSION 1
 #define CONNECTION_COUNT 16
-#define PACKET_TIMEOUT_SEC 2.0
+#define PACKET_TIMEOUT_SEC 4
 // Expected outgoing packets per sec * packet timeout in sec * 2 + 2 (just to be sure)
 #define PACKET_BUFFER_SIZE 100 * 2 * 2 + 2
 
@@ -93,11 +93,14 @@ bool setup() {
 #endif
 }
 
-void wait(double seconds) {
+void msleep(int milliseconds){
 #if PLATFORM == PLATFORM_WINDOWS
-    Sleep(seconds * 1000);
+    Sleep(milliseconds);
 #else
-    sleep(seconds);
+    struct timespec ts;
+    ts.tv_sec = milliseconds / 1000;
+    ts.tv_nsec = (milliseconds % 1000) * 1000000;
+    nanosleep(&ts, NULL);
 #endif
 }
 
@@ -305,7 +308,7 @@ void UdpSocket::tick() {
                 break;
 
             PacketRef packet = connections[i].packetBuffer[nextArkPtr];
-            if (packet.ark || currentTimestamp - packet.timestamp >= 2) {
+            if (packet.ark || currentTimestamp - packet.timestamp >= PACKET_TIMEOUT_SEC) {
                 // TODO: Track metrics like rtt and packet loss
                 currentArkPtr = nextArkPtr;
 
@@ -373,13 +376,10 @@ int main(int argc, char** argv) {
     msg.protocol = PROTOCOL_VERSION;
 
     while(true) {
-        for (int i = 0; i < messagesPerTick; ++i) {
-            socket.send(targetPort, address, &msg, sizeof(msg));
-        }
+        socket.send(targetPort, address, &msg, sizeof(msg));
         socket.read();
         socket.tick();
-        // wait(1.0 / 30.0);
-        wait(1.0);
+        msleep(messagesPerTick);
     }
 
     socket.destroy();
