@@ -66,6 +66,10 @@ struct Connection {
     unsigned int remoteSequence;
     unsigned int arkFlags;
 
+    // rtt in ms
+    float ping;
+    float packetLoss;
+
     int currentPacketPtr;
     int currentArkPtr;
     PacketRef packetBuffer[PACKET_BUFFER_SIZE];
@@ -231,11 +235,11 @@ void UdpSocket::read() {
         }
         connections[connectionId].arkFlags = arkFlags;
 
-        printf("seq: %d, content: %s, from: %d\n", 
-            msg.sequence,
-            msg.content,
-            connectionId
-        );
+        // printf("seq: %d, content: %s, from: %d\n", 
+        //     msg.sequence,
+        //     msg.content,
+        //     connectionId
+        // );
 
         int currentArkPtr = connections[connectionId].currentArkPtr;
         const int currentPacketPtr = connections[connectionId].currentPacketPtr;
@@ -290,6 +294,8 @@ int UdpSocket::findConnection(unsigned int address) {
         connections[connectionId].currentPacketPtr = 0;
         connections[connectionId].currentArkPtr = -1;
         connections[connectionId].arkFlags = 0;
+        connections[connectionId].ping = 0;
+        connections[connectionId].packetLoss = 0;
     }
 
     return connectionId;
@@ -315,12 +321,21 @@ void UdpSocket::tick() {
 
             PacketRef packet = connections[i].packetBuffer[nextArkPtr];
             if (packet.ark || currentTimestamp - packet.timestamp >= PACKET_TIMEOUT_MS) {
-                // TODO: Track metrics like rtt and packet loss
                 currentArkPtr = nextArkPtr;
 
+                // ping / loss tracking
+                float ping = connections[i].ping;
+                float loss = connections[i].packetLoss;
                 if (!packet.ark) {
-                    printf("Packet %u timeouted\n", packet.sequence);
+                    // packet timed out
+                    loss = 0.9 * loss + 0.1;
+                } else {
+                    loss = 0.9 * loss;
+                    ping = 0.9 * ping + 0.1 * (currentTimestamp - packet.timestamp);
                 }
+                connections[i].packetLoss = loss;
+                connections[i].ping = ping;
+                printf("ping: %f, loss: %f\n", ping, loss);
             } else {
                 break;
             }
