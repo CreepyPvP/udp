@@ -39,7 +39,7 @@
 #define CONNECTION_COUNT 16
 #define PACKET_TIMEOUT_SEC 2.0
 // Expected outgoing packets per sec * packet timeout in sec * 2 + 2 (just to be sure)
-#define PACKET_BUFFER_SIZE 10 * 2 * 2 + 2
+#define PACKET_BUFFER_SIZE 100 * 2 * 2 + 2
 
 union Message {
     char raw[256];
@@ -64,6 +64,7 @@ struct Connection {
     unsigned int address;
     unsigned int sequence;
     unsigned int remoteSequence;
+    unsigned int arkFlags;
 
     int currentPacketPtr;
     int currentArkPtr;
@@ -141,7 +142,7 @@ bool UdpSocket::send(int port, unsigned int address, Message* message, unsigned 
     unsigned int sequence = ++(connections[connectionId].sequence); 
     message->sequence = sequence;
     message->ark = connections[connectionId].remoteSequence;
-    
+    message->arkFlags = connections[connectionId].arkFlags;
     
     int currentPacketPtr = connections[connectionId].currentPacketPtr;
     PacketRef packetRef;
@@ -201,17 +202,35 @@ void UdpSocket::read() {
         }
 
         int connectionId = findConnection(fromAddress);
-        connections[connectionId].remoteSequence = msg.sequence;
 
-        int currentArkPtr = connections[connectionId].currentArkPtr;
-        const int currentPacketPtr = connections[connectionId].currentPacketPtr;
-        PacketRef* packetBuffer = connections[connectionId].packetBuffer;
+        unsigned int remoteSequence = connections[connectionId].remoteSequence;
+        unsigned int arkFlags = connections[connectionId].arkFlags;
+        if (msg.sequence > remoteSequence) {
+            connections[connectionId].remoteSequence = msg.sequence;
+            unsigned int diff = msg.sequence - remoteSequence;
+            if (diff >= sizeof(arkFlags) * 8) {
+                arkFlags = 0;
+            } else {
+                arkFlags = (arkFlags << diff) | (1 << (diff - 1));
+            }
+            remoteSequence = connections[connectionId].remoteSequence;
+        } else {
+            unsigned int diff = remoteSequence - msg.sequence;
+            if (diff <= 32) {
+                arkFlags = arkFlags | (1 << (diff - 1));
+            }
+        }
+        connections[connectionId].arkFlags = arkFlags;
+
         printf("seq: %d, content: %s, from: %d\n", 
             msg.sequence,
             msg.content,
             connectionId
         );
 
+        int currentArkPtr = connections[connectionId].currentArkPtr;
+        const int currentPacketPtr = connections[connectionId].currentPacketPtr;
+        PacketRef* packetBuffer = connections[connectionId].packetBuffer;
         if (currentArkPtr < 0)
             continue;
 
@@ -222,14 +241,20 @@ void UdpSocket::read() {
 
             PacketRef packet = packetBuffer[currentArkPtr];
 
-            // TODO: ark older packets here
-            int sequenceDif = packet.sequence - msg.ark;
-            if (packet.sequence == msg.ark && !packet.ark) {
-                packet.ark = true;
-                packet.arkTimestamp = currentTimestamp;
-                packetBuffer[currentArkPtr] = packet;
+            if (packet.sequence <= msg.ark && !packet.ark) {
+                unsigned int sequenceDiff = msg.ark - packet.sequence;
+                // need to use arkMask to only perform bitshift when
+                // right operand >= 0 and < width of left operand
+                // otherwise its UB!
+                unsigned int arkMask = (sequenceDiff != 0 && sequenceDiff <= sizeof(msg.arkFlags) * 8) ? 
+                    1 << (sequenceDiff - 1) : 
+                    0;
+                if (sequenceDiff == 0 || (msg.arkFlags & arkMask)) {
+                    packet.ark = true;
+                    packet.arkTimestamp = currentTimestamp;
+                    packetBuffer[currentArkPtr] = packet;
+                }
             }
-
             if (++currentArkPtr == PACKET_BUFFER_SIZE) {
                 currentArkPtr = 0;
             }
@@ -255,6 +280,7 @@ int UdpSocket::findConnection(unsigned int address) {
         connections[connectionId].remoteSequence = 0;
         connections[connectionId].currentPacketPtr = 0;
         connections[connectionId].currentArkPtr = -1;
+        connections[connectionId].arkFlags = 0;
     }
 
     return connectionId;
