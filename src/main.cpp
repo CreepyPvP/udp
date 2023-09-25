@@ -56,7 +56,7 @@ union Message {
 struct PacketRef {
     unsigned int sequence;
     bool ark;
-    uint64_t timestamp;
+    uint64_t sentTimestamp;
     uint64_t arkTimestamp;
 };
 
@@ -172,8 +172,11 @@ bool UdpSocket::send(int port, unsigned int address, Message* message, unsigned 
     PacketRef packetRef;
     packetRef.sequence = sequence;
     packetRef.ark = false;
-    packetRef.timestamp = getTimestamp();
+    packetRef.sentTimestamp = getTimestamp();
     connections[connectionId].packetBuffer[currentPacketPtr] = packetRef;
+
+    static int missCounter = 0;
+    missCounter = (missCounter + 1) % 20;
 
     if (++currentPacketPtr >= PACKET_BUFFER_SIZE) {
         currentPacketPtr = 0;
@@ -186,6 +189,9 @@ bool UdpSocket::send(int port, unsigned int address, Message* message, unsigned 
     addr.sin_addr.s_addr = htonl(address);
     addr.sin_port = htons(port);
 
+    if (missCounter == 19) {
+        return true;
+    }
     int sent_bytes = sendto(handle, message->raw, messageSize, 0, 
         (sockaddr*) &addr, 
         sizeof(sockaddr_in)
@@ -295,7 +301,6 @@ int UdpSocket::findConnection(unsigned int address) {
         }
     }
     if (connectionId < 0) {
-        printf("opening connection\n"); // DBG
         assert(currentConnections < CONNECTION_COUNT);
         connectionId = currentConnections;
         ++currentConnections;
@@ -334,7 +339,7 @@ void UdpSocket::tick() {
                 break;
 
             PacketRef packet = connections[i].packetBuffer[nextArkPtr];
-            if (packet.ark || currentTimestamp - packet.timestamp >= PACKET_TIMEOUT_MS) {
+            if (packet.ark || currentTimestamp - packet.sentTimestamp >= PACKET_TIMEOUT_MS) {
                 currentArkPtr = nextArkPtr;
 
                 // ping / loss tracking
@@ -343,7 +348,7 @@ void UdpSocket::tick() {
                     loss = 0.9 * loss + 0.1;
                 } else {
                     loss = 0.9 * loss;
-                    ping = 0.9 * ping + 0.1 * (currentTimestamp - packet.timestamp);
+                    ping = 0.9 * ping + 0.1 * (packet.arkTimestamp - packet.sentTimestamp);
                 }
             } else {
                 break;
