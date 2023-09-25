@@ -175,9 +175,6 @@ bool UdpSocket::send(int port, unsigned int address, Message* message, unsigned 
     packetRef.sentTimestamp = getTimestamp();
     connections[connectionId].packetBuffer[currentPacketPtr] = packetRef;
 
-    static int missCounter = 0;
-    missCounter = (missCounter + 1) % 20;
-
     if (++currentPacketPtr >= PACKET_BUFFER_SIZE) {
         currentPacketPtr = 0;
     }
@@ -189,9 +186,6 @@ bool UdpSocket::send(int port, unsigned int address, Message* message, unsigned 
     addr.sin_addr.s_addr = htonl(address);
     addr.sin_port = htons(port);
 
-    if (missCounter == 19) {
-        return true;
-    }
     int sent_bytes = sendto(handle, message->raw, messageSize, 0, 
         (sockaddr*) &addr, 
         sizeof(sockaddr_in)
