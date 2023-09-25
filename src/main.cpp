@@ -37,7 +37,7 @@
 
 #define PROTOCOL_VERSION 1
 #define CONNECTION_COUNT 16
-#define PACKET_TIMEOUT_MS 4000
+#define PACKET_TIMEOUT_MS 2000
 // Expected outgoing packets per sec * packet timeout in sec * 2 + 2 (just to be sure)
 #define PACKET_BUFFER_SIZE 100 * 2 * 2 + 2
 
@@ -284,6 +284,7 @@ int UdpSocket::findConnection(unsigned int address) {
         }
     }
     if (connectionId < 0) {
+        printf("opening connection\n"); // DBG
         assert(currentConnections < CONNECTION_COUNT);
         connectionId = currentConnections;
         ++currentConnections;
@@ -311,6 +312,8 @@ void UdpSocket::tick() {
             currentArkPtr = 0;
         }
 
+        float ping = connections[i].ping;
+        float loss = connections[i].packetLoss;
         while (true) {
             int nextArkPtr = currentArkPtr;
             if (++nextArkPtr == PACKET_BUFFER_SIZE)
@@ -324,8 +327,6 @@ void UdpSocket::tick() {
                 currentArkPtr = nextArkPtr;
 
                 // ping / loss tracking
-                float ping = connections[i].ping;
-                float loss = connections[i].packetLoss;
                 if (!packet.ark) {
                     // packet timed out
                     loss = 0.9 * loss + 0.1;
@@ -333,15 +334,15 @@ void UdpSocket::tick() {
                     loss = 0.9 * loss;
                     ping = 0.9 * ping + 0.1 * (currentTimestamp - packet.timestamp);
                 }
-                connections[i].packetLoss = loss;
-                connections[i].ping = ping;
-                printf("ping: %f, loss: %f\n", ping, loss);
             } else {
                 break;
             }
         }
-
+        connections[i].packetLoss = loss;
+        connections[i].ping = ping;
         connections[i].currentArkPtr = currentArkPtr;
+
+        printf("ping: %f, loss: %f\n", ping, loss);
     }
 }
 
